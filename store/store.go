@@ -45,7 +45,9 @@ type (
 // down the store.
 func New(ctx context.Context) store {
 	s := store{
-		items: make(map[string][]byte),
+		items:   make(map[string][]byte),
+		mailbox: make(chan interface{}),
+		done:    make(chan struct{}),
 	}
 
 	go s.startActor(ctx)
