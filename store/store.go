@@ -12,7 +12,7 @@ var (
 	ErrStoreClosed      = errors.New("store has been closed")
 )
 
-type store struct {
+type Store struct {
 	items   map[string][]byte
 	mailbox chan interface{}
 	done    chan struct{}
@@ -43,9 +43,11 @@ type (
 // New initialises the store structure enabling concurrent read and
 // write access to it. The passed in context can be be used to tear
 // down the store.
-func New(ctx context.Context) store {
-	s := store{
-		items: make(map[string][]byte),
+func New(ctx context.Context) Store {
+	s := Store{
+		items:   make(map[string][]byte),
+		mailbox: make(chan interface{}),
+		done:    make(chan struct{}),
 	}
 
 	go s.startActor(ctx)
@@ -56,7 +58,7 @@ func New(ctx context.Context) store {
 // Set will create a new item in the store if it does not already
 // exist. If the key already exists, or the store has been closed
 // an error will be returned to the caller.
-func (s *store) Set(key string, value []byte) error {
+func (s *Store) Set(key string, value []byte) error {
 	if s.closed() {
 		return ErrStoreClosed
 	}
@@ -74,7 +76,7 @@ func (s *store) Set(key string, value []byte) error {
 // Get will retrieve an item from the store if it exists,
 // returning an error if it does not or if the store has
 // been closed previously.
-func (s store) Get(key string) ([]byte, error) {
+func (s Store) Get(key string) ([]byte, error) {
 	if s.closed() {
 		return nil, ErrStoreClosed
 	}
@@ -90,7 +92,7 @@ func (s store) Get(key string) ([]byte, error) {
 // Update will mutate an existing key, value pair. If the key
 // does not already exist or the store has been closed an
 // error will be returned to the caller.
-func (s *store) Update(key string, value []byte) error {
+func (s *Store) Update(key string, value []byte) error {
 	if s.closed() {
 		return ErrStoreClosed
 	}
@@ -107,7 +109,7 @@ func (s *store) Update(key string, value []byte) error {
 
 // Delete will attempt to delete a key, returning an error if
 // either the store is closed or the key does not exist.
-func (s *store) Delete(key string) error {
+func (s *Store) Delete(key string) error {
 	if s.closed() {
 		return ErrStoreClosed
 	}
@@ -122,7 +124,7 @@ func (s *store) Delete(key string) error {
 	return nil
 }
 
-func (s *store) startActor(ctx context.Context) {
+func (s *Store) startActor(ctx context.Context) {
 	go func() {
 		<-ctx.Done()
 		close(s.mailbox)
@@ -148,7 +150,7 @@ func (s *store) startActor(ctx context.Context) {
 	close(s.done)
 }
 
-func (s store) closed() bool {
+func (s Store) closed() bool {
 	select {
 	case <-s.done:
 		return true
