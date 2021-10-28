@@ -76,7 +76,7 @@ func (s *Store) Set(key string, value []byte) error {
 // Get will retrieve an item from the store if it exists,
 // returning an error if it does not or if the store has
 // been closed previously.
-func (s Store) Get(key string) ([]byte, error) {
+func (s *Store) Get(key string) ([]byte, error) {
 	if s.closed() {
 		return nil, ErrStoreClosed
 	}
@@ -150,7 +150,7 @@ func (s *Store) startActor(ctx context.Context) {
 	close(s.done)
 }
 
-func (s Store) closed() bool {
+func (s *Store) closed() bool {
 	select {
 	case <-s.done:
 		return true
