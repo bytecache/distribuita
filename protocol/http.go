@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 
@@ -14,6 +15,7 @@ import (
 func StartHTTP(ctx context.Context, port int) error {
 	s := store.New(ctx)
 	http.HandleFunc("/store", withStore(ctx, s))
+	http.HandleFunc("/health", healthHandler)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
@@ -26,6 +28,7 @@ func withStore(ctx context.Context, s store.Store) func(w http.ResponseWriter, r
 }
 
 func storeHandler(s store.Store, w http.ResponseWriter, r *http.Request) {
+	log.Printf("serving request method[%s] query[%v]", r.Method, r.URL.RawQuery)
 	switch r.Method {
 	case http.MethodGet:
 		q, err := url.ParseQuery(r.URL.RawQuery)
@@ -115,4 +118,8 @@ func storeHandler(s store.Store, w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+}
+
+func healthHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
