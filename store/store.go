@@ -14,18 +14,15 @@ var (
 
 type Store struct {
 	items   map[string][]byte
-	mailbox chan interface{}
+	mailbox chan request
 	done    chan struct{}
 }
 
-type keyRequest struct {
+type request struct {
+	action   string
 	key      string
+	value    []byte
 	response chan response
-}
-
-type keyValueRequest struct {
-	keyRequest
-	value []byte
 }
 
 type response struct {
@@ -33,20 +30,13 @@ type response struct {
 	err   error
 }
 
-type (
-	getAction    struct{ keyRequest }
-	setAction    struct{ keyValueRequest }
-	updateAction struct{ keyValueRequest }
-	deleteAction struct{ keyRequest }
-)
-
 // New initialises the store structure enabling concurrent read and
 // write access to it. The passed in context can be be used to tear
 // down the store.
 func New(ctx context.Context) Store {
 	s := Store{
 		items:   make(map[string][]byte),
-		mailbox: make(chan interface{}),
+		mailbox: make(chan request),
 		done:    make(chan struct{}),
 	}
 
@@ -59,69 +49,85 @@ func New(ctx context.Context) Store {
 // exist. If the key already exists, or the store has been closed
 // an error will be returned to the caller.
 func (s *Store) Set(key string, value []byte) error {
-	if s.closed() {
+	resp := make(chan response)
+	select {
+	case <-s.done:
 		return ErrStoreClosed
+	default:
+		s.mailbox <- request{
+			action:   "set",
+			key:      key,
+			value:    value,
+			response: resp,
+		}
 	}
 
-	_, ok := s.items[key]
-	if ok {
-		return ErrKeyAlreadyExists
-	}
+	result := <-resp
 
-	s.items[key] = value
-
-	return nil
+	return result.err
 }
 
 // Get will retrieve an item from the store if it exists,
 // returning an error if it does not or if the store has
 // been closed previously.
 func (s *Store) Get(key string) ([]byte, error) {
-	if s.closed() {
+	resp := make(chan response)
+	select {
+	case <-s.done:
 		return nil, ErrStoreClosed
+	default:
+		s.mailbox <- request{
+			action:   "get",
+			key:      key,
+			response: resp,
+		}
 	}
 
-	v, ok := s.items[key]
-	if !ok {
-		return nil, ErrKeyNotFound
-	}
+	result := <-resp
 
-	return v, nil
+	return result.value, result.err
 }
 
 // Update will mutate an existing key, value pair. If the key
 // does not already exist or the store has been closed an
 // error will be returned to the caller.
 func (s *Store) Update(key string, value []byte) error {
-	if s.closed() {
+	resp := make(chan response)
+	select {
+	case <-s.done:
 		return ErrStoreClosed
+	default:
+		s.mailbox <- request{
+			action:   "update",
+			key:      key,
+			value:    value,
+			response: resp,
+		}
 	}
 
-	_, ok := s.items[key]
-	if !ok {
-		return ErrKeyNotFound
-	}
+	result := <-resp
 
-	s.items[key] = value
-
-	return nil
+	return result.err
 }
 
 // Delete will attempt to delete a key, returning an error if
 // either the store is closed or the key does not exist.
 func (s *Store) Delete(key string) error {
-	if s.closed() {
+	resp := make(chan response)
+	select {
+	case <-s.done:
 		return ErrStoreClosed
+	default:
+		s.mailbox <- request{
+			action:   "delete",
+			key:      key,
+			response: resp,
+		}
 	}
 
-	_, ok := s.items[key]
-	if !ok {
-		return ErrKeyNotFound
-	}
+	result := <-resp
 
-	delete(s.items, key)
-
-	return nil
+	return result.err
 }
 
 func (s *Store) startActor(ctx context.Context) {
@@ -131,30 +137,40 @@ func (s *Store) startActor(ctx context.Context) {
 	}()
 
 	for msg := range s.mailbox {
-		switch m := msg.(type) {
-		case getAction:
-			value, err := s.Get(m.key)
-			m.response <- response{value, err}
-
-		case setAction:
-			m.response <- response{err: s.Set(m.key, m.value)}
-
-		case updateAction:
-			m.response <- response{err: s.Update(m.key, m.value)}
-
-		case deleteAction:
-			m.response <- response{err: s.Delete(m.key)}
+		switch msg.action {
+		case "get":
+			v, ok := s.items[msg.key]
+			if !ok {
+				msg.response <- response{err: ErrKeyNotFound}
+				continue
+			}
+			msg.response <- response{value: v}
+		case "set":
+			_, ok := s.items[msg.key]
+			if ok {
+				msg.response <- response{err: ErrKeyAlreadyExists}
+				continue
+			}
+			s.items[msg.key] = msg.value
+			msg.response <- response{}
+		case "update":
+			_, ok := s.items[msg.key]
+			if !ok {
+				msg.response <- response{err: ErrKeyNotFound}
+				continue
+			}
+			s.items[msg.key] = msg.value
+			msg.response <- response{}
+		case "delete":
+			_, ok := s.items[msg.key]
+			if !ok {
+				msg.response <- response{err: ErrKeyNotFound}
+				continue
+			}
+			delete(s.items, msg.key)
+			msg.response <- response{}
 		}
 	}
 
 	close(s.done)
-}
-
-func (s *Store) closed() bool {
-	select {
-	case <-s.done:
-		return true
-	default:
-		return false
-	}
 }
